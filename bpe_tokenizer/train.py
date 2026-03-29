@@ -1,60 +1,15 @@
 import os
 import regex as re
+
+from cs336_basics.utils import (
+    _dec,
+    _pretokenize_chunks,
+    find_chunk_boundaries,
+    num_workers,
+    save_vocab_and_merges,
+)
 from multiprocessing import Pool
 
-GPT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-num_workers = os.cpu_count() or 1
-
-def find_chunk_boundaries(file, desired_num_chunks: int, split_special_token: bytes) -> list[int]:
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
-
-    chunk_size = file_size // desired_num_chunks
-
-    chunk_boundaries = [i * chunk_size for i in range(desired_num_chunks + 1)]
-    chunk_boundaries[-1] = file_size
-
-    mini_chunk_size = 4096
-
-    for bi in range(1, len(chunk_boundaries) - 1):
-        initial_position = chunk_boundaries[bi]
-        file.seek(initial_position)
-        while True:
-            mini_chunk = file.read(mini_chunk_size)
-
-            if mini_chunk == b"":
-                chunk_boundaries[bi] = file_size
-                break
-
-            found_at = mini_chunk.find(split_special_token)
-            if found_at != -1:
-                chunk_boundaries[bi] = initial_position + found_at
-                break
-            initial_position += mini_chunk_size
-
-    return sorted(set(chunk_boundaries))
-
-def _pretokenize_chunks(args):
-    path, start, end, special_pattern = args
-    with open(path, "rb") as f:
-        f.seek(start)
-        raw = f.read(end - start)
-
-    text = raw.decode("utf-8")
-    processed = re.split(special_pattern, text)
-
-    pre_tokenized = []
-    for chunk in processed:
-        for match in re.finditer(GPT_PATTERN, chunk):
-            pre_tokenized.append(match.group())
-
-    return pre_tokenized
-
-def _dec(pair_counts, pair):
-    pair_counts[pair] -= 1
-    if pair_counts[pair] <= 0:
-        del pair_counts[pair]
 
 def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
     vocab = {i: bytes([i]) for i in range(256)}
@@ -126,5 +81,10 @@ def train_bpe(input_path: str, vocab_size: int, special_tokens: list[str]):
 
     for token in special_tokens:
         vocab[len(vocab)] = token.encode("utf-8")
+
+    cwd = os.getcwd()
+    vocab_path = os.path.join(cwd, "vocab.json")
+    merges_path = os.path.join(cwd, "merges.txt")
+    save_vocab_and_merges(vocab, merges, vocab_path, merges_path)
 
     return (vocab, merges)
