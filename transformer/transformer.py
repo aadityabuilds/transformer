@@ -37,10 +37,17 @@ class RoPE(nn.Module):
         pass
 
 class RMSNorm(nn.Module):
-    def __init__(self):
+    def __init__(self, d_model, eps=1e-5, device=None, dtype=None):
         super().__init__()
-        pass
-    
+        self.d_model = d_model 
+        self.gamma_weights = nn.Parameter(torch.ones(d_model))
+        self.eps = eps 
+
+    def forward(self, x):
+        squared_mean = (torch.mean(x**2, dim=-1, keepdim=True))
+        RMS = torch.sqrt(squared_mean + self.eps)
+        return (x / RMS) * self.gamma_weights
+
 class FeedForward(nn.Module):
     def __init__(self):
         super().__init__()
