@@ -70,13 +70,39 @@ class RMSNorm(nn.Module):
         RMS = torch.sqrt(squared_mean + self.eps)
         return (x / RMS) * self.gamma_weights
 
+def SiLU(x):
+    return x * torch.sigmoid(x)
+
 class FeedForward(nn.Module):
-    def __init__(self):
+    def __init__(self, d_model, device=None, dtype=torch.float32):
         super().__init__()
-        pass
+        self.d_model = d_model
+        self.d_ff = int(d_model * 8/3)
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dtype = dtype
+        
+        self.weight1 = Linear(in_features=d_model, out_features=self.d_ff, device=self.device, dtype=dtype)
+        self.weight2 = Linear(in_features=self.d_ff, out_features=d_model, device=self.device, dtype=dtype)
+        self.weight3 = Linear(in_features=d_model, out_features=self.d_ff, device=self.device, dtype=dtype)
+
+    def forward(self, x):
+        first = self.weight1(x)
+        first = SiLU(first)
+        second = self.weight3(x)
+        intermediate = first * second
+        return self.weight2(intermediate)
+        
+def scaled_dot_attention(Q, K, V, mask=None):
+    d_k = Q.shape[-1]
+    numerator = Q @ K.transpose(-2, -1)
+    term = numerator / math.sqrt(d_k)
+    if mask is not None: 
+        term = torch.masked_fill(mask, ('-inf'))
+    softmax = torch.softmax(term, dim=-1)
+    return softmax @ V
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self):
+    def __init__(self, d_model, num_heads, theta=None, max_seq_len=None, use_rope=False):
         super().__init__()
         pass
 
