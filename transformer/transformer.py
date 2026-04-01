@@ -32,9 +32,31 @@ class Embedding(nn.Module):
         return self.weights[token_ids]
 
 class RoPE(nn.Module):
-    def __init__(self): 
+    def __init__(self, theta, d_k, max_seq_len, device):
         super().__init__()
-        pass
+        self.theta = theta
+        self.d_k = d_k
+        self.max_seq_len = max_seq_len
+        self.device = device 
+        powers = torch.arange(0, d_k, 2) / d_k
+        freqs = 1.0 / (theta ** powers)
+        t = torch.arange(max_seq_len)
+        angles = torch.outer(t, freqs)
+        self.register_buffer("cos", torch.cos(angles), persistent=False)
+        self.register_buffer("sin", torch.sin(angles), persistent=False)
+    
+    def forward(self, x, token_positions):
+        cos = self.cos[token_positions]
+        sin = self.sin[token_positions]
+        if token_positions.ndim == 1:
+            cos = cos.unsqueeze(0)
+            sin = sin.unsqueeze(0)
+        x_even = x[..., 0::2]
+        x_odd = x[..., 1::2]
+        x_rotated_even = x_even * cos - x_odd * sin
+        x_rotated_odd = x_even * sin + x_odd * cos
+        result = torch.stack([x_rotated_even, x_rotated_odd], dim=-1)
+        return result.flatten(-2)
 
 class RMSNorm(nn.Module):
     def __init__(self, d_model, eps=1e-5, device=None, dtype=None):
