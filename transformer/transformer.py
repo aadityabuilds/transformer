@@ -185,4 +185,4 @@ class Transformer(nn.Module):
             embeddings = block(embeddings)
         normalized = self.norm(embeddings)
         logits = self.linear(normalized)
-        return torch.softmax(logits)
+        return logits 
