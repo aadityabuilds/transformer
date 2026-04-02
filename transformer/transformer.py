@@ -97,21 +97,92 @@ def scaled_dot_attention(Q, K, V, mask=None):
     numerator = Q @ K.transpose(-2, -1)
     term = numerator / math.sqrt(d_k)
     if mask is not None: 
-        term = torch.masked_fill(mask, ('-inf'))
+        term = term.masked_fill(mask, float('-inf'))
     softmax = torch.softmax(term, dim=-1)
     return softmax @ V
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model, num_heads, theta=None, max_seq_len=None, use_rope=False):
         super().__init__()
-        pass
+        self.d_model = d_model 
+        self.num_heads = num_heads 
+        self.theta = theta
+        self.max_seq_len = max_seq_len
+        self.use_rope = use_rope
+        self.d_k = d_model // num_heads
+
+        self.W_Q = Linear(in_features=d_model, out_features=(self.d_k * num_heads))
+        self.W_K = Linear(in_features=d_model, out_features=(self.d_k * num_heads))
+        self.W_V = Linear(in_features=d_model, out_features=(self.d_k * num_heads))
+        self.W_O = Linear(in_features=d_model, out_features=d_model)
+
+        if use_rope: 
+            self.RoPE = RoPE(theta, self.d_k, max_seq_len)
+        
+    def forward(self, x):
+        seq_len = x.shape[-2]
+
+        Q = self.W_Q(x)
+        K = self.W_K(x)
+        V = self.W_V(x)
+
+        Q = rearrange(Q, "b n (num_heads d_k) -> b num_heads n d_k", num_heads = self.num_heads) 
+        K = rearrange(K, "b n (num_heads d_k) -> b num_heads n d_k", num_heads = self.num_heads) 
+        V = rearrange(V, "b n (num_heads d_k) -> b num_heads n d_k", num_heads = self.num_heads) 
+
+        if self.use_rope:
+            token_positions = torch.arange(seq_len) 
+            Q = self.RoPE(Q, token_positions)
+            K = self.RoPE(K, token_positions)
+
+        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+        attention = scaled_dot_attention(Q, K, V, mask)
+
+        attention = rearrange(attention, "b num_heads n d_k ->  b n (num_heads d_k)", num_heads=self.num_heads)
+        result = self.W_O(attention)
+        return result 
 
 class TransformerBlock(nn.Module):
-    def __init__(self):
+    def __init__(self, d_model, num_heads, theta=None, max_seq_len=None, use_rope=False):
         super().__init__()
-        pass
+        self.d_model = d_model 
+        self.num_heads = num_heads 
+        self.theta = theta
+        self.max_seq_len = max_seq_len
+        self.use_rope = use_rope
+        self.MHA = MultiHeadAttention(self.d_model, self.num_heads, self.theta, self.max_seq_len, self.use_rope)
+        self.FFN = FeedForward(self.d_model)
+        self.norm1 = RMSNorm(d_model)
+        self.norm2 = RMSNorm(d_model)
+
+    def forward(self, x):
+        first_norm = self.norm1(x)
+        MHA = self.MHA(first_norm)
+        x = x + MHA 
+        second_norm = self.norm2(x)
+        FFN = self.FFN(second_norm)
+        return x + FFN 
 
 class Transformer(nn.Module):
-    def __init__(self):
+    def __init__(self, num_layers, d_model, num_heads,  num_embeddings, embedding_dim, theta=None, max_seq_len=None, use_rope=False):
         super().__init__()
-        pass
+        self.num_layers = num_layers
+        self.d_model = d_model 
+        self.num_heads = num_heads 
+        self.theta = theta
+        self.max_seq_len = max_seq_len
+        self.use_rope = use_rope
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.embedding = Embedding(num_embeddings, embedding_dim)
+        self.blocks = nn.ModuleList([TransformerBlock(d_model, num_heads, theta, max_seq_len, use_rope) for _ in range(num_layers)])
+        self.norm = RMSNorm(d_model)
+        self.linear = Linear(in_features=d_model, out_features=num_embeddings)
+
+    def forward(self, token_list):
+        embeddings = self.embedding(token_list)
+        for block in self.blocks: 
+            embeddings = block(embeddings)
+        normalized = self.norm(embeddings)
+        logits = self.linear(normalized)
+        return torch.softmax(logits)
