@@ -3,6 +3,7 @@ from typing import Optional
 import math 
 import torch 
 from torch.optim import Optimizer
+from transformer import Transformer
 
 def cross_entropy_loss(logits, targets):
     max_logit = logits.max(dim=-1, keepdim=True).values
@@ -103,3 +104,28 @@ def load_checkpoint(src, model, optimizer):
     model.load_state_dict(content["model_state"])
     optimizer.load_state_dict(content["optimizer_state"])
     return content["iteration_state"]
+
+def decoding(prompt, max_token, temperature=1.0, top_p=0.9):
+    model = Transformer()
+    output = ""
+    END_OF_TEXT = "<|endoftext|>"
+    for _ in range(max_token):
+        token_list = tokenizer.encode(prompt)
+        prediction = model.forward(token_list)
+        next_token_logits = prediction[..., -1, :]
+        shifted = next_token_logits / temperature
+        probs = torch.softmax(shifted, dim=-1)
+        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+        indices_to_remove = (cumulative_probs - sorted_probs) > top_p
+        sorted_probs[indices_to_remove] = 0
+        sorted_probs = sorted_probs / sorted_probs.sum()
+        next_token_id = torch.multinomial(sorted_probs, num_samples=1)
+        next_token = sorted_indices[next_token_id] 
+        next_token = tokenizer.decode(next_token)
+        if next_token == END_OF_TEXT:
+            break
+        prompt += next_token
+        output += next_token
+        
+    return output

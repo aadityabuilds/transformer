@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from transformer import Transformer
-from utils import (
+from transformer.utils import (
     cross_entropy_loss,
     AdamW,
     learning_rate_schedule,

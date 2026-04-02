@@ -1592,7 +1592,7 @@ wheels = [
 [[package]]
 name = "transformer"
 version = "1.0.6"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "einops" },
     { name = "einx" },

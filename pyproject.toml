@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "transformer"
 version = "1.0.6"
@@ -22,7 +26,7 @@ dependencies = [
 ]
 
 [tool.uv]
-package = false
+package = true
 python-preference = "managed"
 
 [tool.pytest.ini_options]
