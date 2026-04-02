@@ -1,7 +1,7 @@
 from collections.abc import Callable, Iterable
 from typing import Optional
+import math 
 import torch 
-import torch.nn as nn 
 from torch import torch
 from torch.optim import Optimizer
 
@@ -47,3 +47,44 @@ class AdamW(Optimizer):
                 state["t"] += 1
                 
         return loss 
+
+def learning_rate_schedule(t, alpha_max, alpha_min, T_w, T_c):
+    if t < T_w: 
+        return t * alpha_max / T_w
+    if t > T_c: 
+        return alpha_min
+    cos_term = math.cos((t - T_w) / (T_c - T_w) * math.pi)
+    return alpha_min + 0.5 * (1 + cos_term) * (alpha_max - alpha_min)
+
+def gradient_clipping(parameters, max_norm, eps=1e-6):
+    grads = [p.grad for p in parameters if p.grad is not None]        
+    norm = torch.norm(torch.stack([torch.norm(g, 2) for g in grads]), 2)
+    if norm > max_norm:
+        scaling_factor = max_norm / (norm + eps)
+        for g in grads:
+            g.detach().mul_(scaling_factor)
+
+def data_loading(x, batch_size, context_length, device):
+    starts = torch.randint(0, len(x) - context_length, (batch_size,))
+    addition = torch.arange(context_length)
+    starts = starts.unsqueeze(1)
+    addition = addition.unsqueeze(0)
+    x_tensor = torch.tensor(x)
+    sequences = x_tensor[starts + addition]
+    targets = x_tensor[starts + addition + 1]
+    return sequences.to(device), targets.to(device)   
+
+def save_checkpoint(model, optimizer, iteration, out):
+    model_state = model.state_dict()
+    optimizer_state = optimizer.state_dict()
+    torch.save({
+        "model_state": model_state,
+        "optimizer_state": optimizer_state, 
+        "iteration_state": iteration
+    }, out)
+
+def load_checkpoint(src, model, optimizer):
+    content = torch.load(src)
+    model.load_state_dict(content["model_state"])
+    optimizer.load_state_dict(content["optimizer_state"])
+    return content["iteration_state"]
