@@ -1,9 +1,10 @@
 from collections.abc import Callable
 from typing import Optional
-import math 
-import torch 
+import math
+
+import numpy as np
+import torch
 from torch.optim import Optimizer
-from transformer import Transformer
 
 def cross_entropy_loss(logits, targets):
     max_logit = logits.max(dim=-1, keepdim=True).values
@@ -57,22 +58,19 @@ def learning_rate_schedule(t, alpha_max, alpha_min, T_w, T_c):
     return alpha_min + 0.5 * (1 + cos_term) * (alpha_max - alpha_min)
 
 def gradient_clipping(parameters, max_norm, eps=1e-6):
-    grads = [p.grad for p in parameters if p.grad is not None]        
+    grads = [p.grad for p in parameters if p.grad is not None]
     norm = torch.norm(torch.stack([torch.norm(g, 2) for g in grads]), 2)
     if norm > max_norm:
         scaling_factor = max_norm / (norm + eps)
         for g in grads:
             g.detach().mul_(scaling_factor)
+    return norm.item()
 
 def data_loading(x, batch_size, context_length, device):
-    starts = torch.randint(0, len(x) - context_length, (batch_size,))
-    addition = torch.arange(context_length)
-    starts = starts.unsqueeze(1)
-    addition = addition.unsqueeze(0)
-    x_tensor = torch.tensor(x)
-    sequences = x_tensor[starts + addition]
-    targets = x_tensor[starts + addition + 1]
-    return sequences.to(device), targets.to(device)   
+    starts = torch.randint(0, len(x) - context_length - 1, (batch_size,))
+    sequences = torch.stack([torch.from_numpy(x[s:s + context_length].astype(np.int64)) for s in starts])
+    targets = torch.stack([torch.from_numpy(x[s + 1:s + 1 + context_length].astype(np.int64)) for s in starts])
+    return sequences.to(device), targets.to(device)
 
 @torch.no_grad()
 def evaluate(model, train_data, val_data, batch_size, context_length, device, eval_batches):
@@ -99,33 +97,43 @@ def save_checkpoint(model, optimizer, iteration, out):
         "iteration_state": iteration
     }, out)
 
-def load_checkpoint(src, model, optimizer):
-    content = torch.load(src)
+def load_checkpoint(src, model, optimizer, device=None):
+    content = torch.load(src, map_location=device, weights_only=True)
     model.load_state_dict(content["model_state"])
     optimizer.load_state_dict(content["optimizer_state"])
     return content["iteration_state"]
 
-def decoding(prompt, max_token, temperature=1.0, top_p=0.9):
-    model = Transformer()
-    output = ""
-    END_OF_TEXT = "<|endoftext|>"
-    for _ in range(max_token):
-        token_list = tokenizer.encode(prompt)
-        prediction = model.forward(token_list)
-        next_token_logits = prediction[..., -1, :]
-        shifted = next_token_logits / temperature
-        probs = torch.softmax(shifted, dim=-1)
-        sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-        cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-        indices_to_remove = (cumulative_probs - sorted_probs) > top_p
-        sorted_probs[indices_to_remove] = 0
-        sorted_probs = sorted_probs / sorted_probs.sum()
-        next_token_id = torch.multinomial(sorted_probs, num_samples=1)
-        next_token = sorted_indices[next_token_id] 
-        next_token = tokenizer.decode(next_token)
-        if next_token == END_OF_TEXT:
+@torch.no_grad()
+def generate(model, tokenizer, prompt, max_tokens=200, temperature=1.0, top_p=0.9, device=None):
+    if device is None:
+        device = next(model.parameters()).device
+    model.eval()
+
+    token_ids = tokenizer.encode(prompt)
+
+    for _ in range(max_tokens):
+        input_ids = torch.tensor([token_ids], dtype=torch.long, device=device)
+        logits = model(input_ids)
+        next_logits = logits[0, -1, :]
+
+        if temperature > 0:
+            scaled = next_logits / temperature
+            probs = torch.softmax(scaled, dim=-1)
+            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
+            cumsum = torch.cumsum(sorted_probs, dim=-1)
+            mask = (cumsum - sorted_probs) > top_p
+            sorted_probs[mask] = 0.0
+            sorted_probs /= sorted_probs.sum()
+            idx = torch.multinomial(sorted_probs, num_samples=1)
+            next_id = sorted_indices[idx].item()
+        else:
+            next_id = next_logits.argmax().item()
+
+        token_ids.append(next_id)
+
+        decoded = tokenizer.decode([next_id])
+        if decoded == "<|endoftext|>":
             break
-        prompt += next_token
-        output += next_token
-        
-    return output
+
+    model.train()
+    return tokenizer.decode(token_ids)

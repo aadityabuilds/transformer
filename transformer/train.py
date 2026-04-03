@@ -1,8 +1,11 @@
 import argparse
+import math
 import os
 import time
+
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from transformer import Transformer
 from transformer.utils import (
@@ -15,6 +18,7 @@ from transformer.utils import (
     save_checkpoint,
     load_checkpoint,
 )
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="Train a Transformer language model")
@@ -57,14 +61,26 @@ def parse_args():
     p.add_argument("--wandb_project", type=str, default="transformer-lm")
     p.add_argument("--wandb_run_name", type=str, default=None)
 
-    p.add_argument("--device", type=str, default=None)
+    p.add_argument("--device", type=str, default=None,
+                   help="Device: cpu, mps, or cuda (auto-detected if omitted)")
 
     return p.parse_args()
+
+
+def get_device(requested: str | None) -> torch.device:
+    if requested:
+        return torch.device(requested)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
 
 def main():
     args = parse_args()
 
-    device = torch.device(args.device if args.device else ("cuda" if torch.cuda.is_available() else "cpu"))
+    device = get_device(args.device)
     print(f"device: {device}")
 
     train_data = np.memmap(args.train_data, dtype=np.uint16, mode="r")
@@ -98,21 +114,35 @@ def main():
 
     start_step = 0
     if args.resume_from is not None:
-        start_step = load_checkpoint(args.resume_from, model, optimizer)
+        start_step = load_checkpoint(args.resume_from, model, optimizer, device=device)
         print(f"resumed from step {start_step}")
 
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
+    wandb_run = None
     if args.wandb:
         import wandb
-        wandb.init(project=args.wandb_project, name=args.wandb_run_name, config=vars(args))
+        wandb_run = wandb.init(
+            project=args.wandb_project,
+            name=args.wandb_run_name,
+            config=vars(args),
+        )
 
     model.train()
-    t0 = time.time()
+    tokens_per_step = args.batch_size * args.context_length
 
-    for step in range(start_step, args.max_steps):
+    pbar = tqdm(
+        range(start_step, args.max_steps),
+        initial=start_step,
+        total=args.max_steps,
+        desc="Training",
+        unit="step",
+    )
+
+    for step in pbar:
+        step_start = time.time()
+
         lr = learning_rate_schedule(step, args.lr_max, args.lr_min, args.warmup_steps, args.cosine_cycle_steps)
-        
         for pg in optimizer.param_groups:
             pg["lr"] = lr
 
@@ -122,48 +152,65 @@ def main():
 
         optimizer.zero_grad()
         loss.backward()
-        gradient_clipping(model.parameters(), args.max_grad_norm)
+        grad_norm = gradient_clipping(model.parameters(), args.max_grad_norm)
         optimizer.step()
 
-        if step % args.log_interval == 0:
-            dt = time.time() - t0
-            tok_per_sec = (
-                args.batch_size * args.context_length * args.log_interval / dt
-                if dt > 0 else 0.0
-            )
-            print(
-                f"step {step:>6d} | loss {loss.item():.4f} | "
-                f"lr {lr:.2e} | {tok_per_sec:,.0f} tok/s"
-            )
-            if args.wandb:
-                wandb.log({"train/loss": loss.item(), "lr": lr, "perf/tok_per_sec": tok_per_sec}, step=step)
-            t0 = time.time()
+        step_time_ms = (time.time() - step_start) * 1000
+        tok_per_sec = tokens_per_step / (step_time_ms / 1000) if step_time_ms > 0 else 0.0
+        loss_val = loss.item()
+        perplexity = math.exp(loss_val) if loss_val < 20 else float("inf")
+
+        pbar.set_postfix(
+            loss=f"{loss_val:.4f}",
+            ppl=f"{perplexity:.1f}",
+            lr=f"{lr:.2e}",
+            toks=f"{tok_per_sec:,.0f}/s",
+        )
+
+        if step % args.log_interval == 0 and wandb_run:
+            metrics = {
+                "train/loss": loss_val,
+                "train/perplexity": perplexity,
+                "train/grad_norm": grad_norm,
+                "train/step_time_ms": step_time_ms,
+                "lr": lr,
+                "perf/tok_per_sec": tok_per_sec,
+            }
+            if device.type == "cuda":
+                metrics["perf/gpu_memory_allocated_gb"] = torch.cuda.memory_allocated(device) / 1e9
+                metrics["perf/gpu_memory_reserved_gb"] = torch.cuda.memory_reserved(device) / 1e9
+            elif device.type == "mps":
+                metrics["perf/mps_memory_allocated_gb"] = torch.mps.current_allocated_memory() / 1e9
+            wandb_run.log(metrics, step=step)
 
         if step > 0 and step % args.eval_interval == 0:
             losses = evaluate(
                 model, train_data, val_data,
                 args.batch_size, args.context_length, device, args.eval_batches,
             )
-            parts = [f"step {step:>6d} | eval"]
+            parts = [f"eval"]
+            eval_metrics = {}
             for split, val in losses.items():
-                parts.append(f"{split}_loss {val:.4f}")
-            print(" | ".join(parts))
-            if args.wandb:
-                import wandb
-                wandb.log({f"eval/{k}_loss": v for k, v in losses.items()}, step=step)
+                ppl = math.exp(val) if val < 20 else float("inf")
+                parts.append(f"{split}_loss={val:.4f} ppl={ppl:.1f}")
+                eval_metrics[f"eval/{split}_loss"] = val
+                eval_metrics[f"eval/{split}_perplexity"] = ppl
+            tqdm.write(f"step {step:>6d} | {' | '.join(parts)}")
+            if wandb_run:
+                wandb_run.log(eval_metrics, step=step)
 
         if step > 0 and step % args.checkpoint_interval == 0:
             ckpt_path = os.path.join(args.checkpoint_dir, f"checkpoint_{step}.pt")
             save_checkpoint(model, optimizer, step, ckpt_path)
-            print(f"checkpoint saved : {ckpt_path}")
+            tqdm.write(f"checkpoint saved: {ckpt_path}")
 
     final_path = os.path.join(args.checkpoint_dir, "final.pt")
     save_checkpoint(model, optimizer, args.max_steps, final_path)
-    print(f"training complete. final checkpoint : {final_path}")
+    print(f"\ntraining complete. final checkpoint: {final_path}")
 
-    if args.wandb:
-        import wandb
-        wandb.finish()
+    if wandb_run:
+        wandb_run.finish()
+
 
 if __name__ == "__main__":
     main()

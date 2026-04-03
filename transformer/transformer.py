@@ -7,10 +7,8 @@ class Linear(nn.Module):
     def __init__(self, in_features, out_features, device=None, dtype=torch.float32):
         super().__init__()
         self.in_features = in_features
-        self.out_features = out_features 
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = dtype 
-        self.weights = nn.Parameter(torch.empty(out_features, in_features, device=self.device, dtype=self.dtype))
+        self.out_features = out_features
+        self.weights = nn.Parameter(torch.empty(out_features, in_features, device=device, dtype=dtype))
         std = math.sqrt(2 / (in_features + out_features))
         torch.nn.init.trunc_normal_(self.weights, mean=0.0, std=std, a=-3 * std, b=3 * std)
 
@@ -22,9 +20,7 @@ class Embedding(nn.Module):
         super().__init__()
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = dtype
-        self.weights = nn.Parameter(torch.empty(num_embeddings, embedding_dim, device=self.device, dtype=self.dtype))
+        self.weights = nn.Parameter(torch.empty(num_embeddings, embedding_dim, device=device, dtype=dtype))
         std = math.sqrt(2 / (num_embeddings + embedding_dim))
         torch.nn.init.trunc_normal_(self.weights, mean=0.0, std=std, a=-3 * std, b=3 * std)
 
@@ -77,13 +73,10 @@ class FeedForward(nn.Module):
     def __init__(self, d_model, device=None, dtype=torch.float32):
         super().__init__()
         self.d_model = d_model
-        self.d_ff = int(d_model * 8/3)
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.dtype = dtype
-        
-        self.weight1 = Linear(in_features=d_model, out_features=self.d_ff, device=self.device, dtype=dtype)
-        self.weight2 = Linear(in_features=self.d_ff, out_features=d_model, device=self.device, dtype=dtype)
-        self.weight3 = Linear(in_features=d_model, out_features=self.d_ff, device=self.device, dtype=dtype)
+        self.d_ff = int(d_model * 8 / 3)
+        self.weight1 = Linear(in_features=d_model, out_features=self.d_ff, device=device, dtype=dtype)
+        self.weight2 = Linear(in_features=self.d_ff, out_features=d_model, device=device, dtype=dtype)
+        self.weight3 = Linear(in_features=d_model, out_features=self.d_ff, device=device, dtype=dtype)
 
     def forward(self, x):
         first = self.weight1(x)
@@ -116,8 +109,8 @@ class MultiHeadAttention(nn.Module):
         self.W_V = Linear(in_features=d_model, out_features=(self.d_k * num_heads))
         self.W_O = Linear(in_features=d_model, out_features=d_model)
 
-        if use_rope: 
-            self.RoPE = RoPE(theta, self.d_k, max_seq_len)
+        if use_rope:
+            self.rope = RoPE(theta, self.d_k, max_seq_len, device="cpu")
         
     def forward(self, x):
         seq_len = x.shape[-2]
@@ -131,11 +124,11 @@ class MultiHeadAttention(nn.Module):
         V = rearrange(V, "b n (num_heads d_k) -> b num_heads n d_k", num_heads = self.num_heads) 
 
         if self.use_rope:
-            token_positions = torch.arange(seq_len) 
-            Q = self.RoPE(Q, token_positions)
-            K = self.RoPE(K, token_positions)
+            token_positions = torch.arange(seq_len, device=x.device)
+            Q = self.rope(Q, token_positions)
+            K = self.rope(K, token_positions)
 
-        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()
+        mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()
         attention = scaled_dot_attention(Q, K, V, mask)
 
         attention = rearrange(attention, "b num_heads n d_k ->  b n (num_heads d_k)", num_heads=self.num_heads)

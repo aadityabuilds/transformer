@@ -1,17 +1,13 @@
 from __future__ import annotations
-
 import json
 import os
 import multiprocessing as mp
 from time import time
-
 import regex as re
 from tqdm import tqdm
-
 from bpe_tokenizer.utils import find_chunk_boundaries, MergeStats, TrainingTracker
 
 GPT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-
 
 def _pretokenize_chunk(input_path: str, special_pattern: str, start: int, end: int) -> list[str]:
     with open(input_path, "rb") as f:
