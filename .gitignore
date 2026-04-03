@@ -1,0 +1,28 @@
+# Data
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+
+# Wandb
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Tokenizer checkpoints
+bpe_tokenizer/checkpoints/
