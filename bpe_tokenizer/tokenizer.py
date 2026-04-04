@@ -9,6 +9,45 @@ from bpe_tokenizer.utils import find_chunk_boundaries, MergeStats, TrainingTrack
 
 GPT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
+
+def _encode_chunk(text: str, merge_lookup: dict[tuple[int, int], int]) -> list[int]:
+    """Encode a text chunk using priority-based merge lookup."""
+    result = []
+    for m in re.finditer(GPT_PATTERN, text):
+        ids = list(m.group().encode("utf-8"))
+        while len(ids) >= 2:
+            best_idx = float("inf")
+            best_pos = -1
+            for j in range(len(ids) - 1):
+                pair = (ids[j], ids[j + 1])
+                idx = merge_lookup.get(pair)
+                if idx is not None and idx < best_idx:
+                    best_idx = idx
+                    best_pos = j
+            if best_pos == -1:
+                break
+            ids[best_pos] = 256 + best_idx
+            del ids[best_pos + 1]
+        result.extend(ids)
+    return result
+
+
+def _encode_file_chunk(
+    input_path: str, special_pattern: str, merge_lookup: dict[tuple[int, int], int],
+    start: int, end: int,
+) -> list[int]:
+    """Read a byte range from a file, split by special tokens, and encode."""
+    with open(input_path, "rb") as f:
+        f.seek(start)
+        chunk_bytes = f.read(end - start)
+    text = chunk_bytes.decode("utf-8", errors="replace")
+    parts = re.split(special_pattern, text) if special_pattern else [text]
+    result = []
+    for part in parts:
+        result.extend(_encode_chunk(part, merge_lookup))
+    return result
+
+
 def _pretokenize_chunk(input_path: str, special_pattern: str, start: int, end: int) -> list[str]:
     with open(input_path, "rb") as f:
         f.seek(start)
@@ -228,6 +267,9 @@ class Tokenizer:
         self.merges = [tuple(p) for p in data["merges"]]
         self.special_tokens = data["special_tokens"]
 
+    def _merge_lookup(self) -> dict[tuple[int, int], int]:
+        return {(a, b): i for i, (a, b) in enumerate(self.merges)}
+
     def encode(self, text: str) -> list[int]:
         result = []
         for token in re.finditer(GPT_PATTERN, text):
@@ -241,6 +283,37 @@ class Tokenizer:
                     else:
                         j += 1
             result.extend(utf_encoding)
+        return result
+
+    def encode_efficient(self, text: str) -> list[int]:
+        """Encode using priority-based merge lookup — O(chunk_len²) instead of O(num_merges × chunk_len)."""
+        merge_lookup = self._merge_lookup()
+        return _encode_chunk(text, merge_lookup)
+
+    def encode_file(self, input_path: str, num_workers: int | None = None) -> list[int]:
+        """Encode a full file using multiprocessing + efficient merge lookup."""
+        if num_workers is None:
+            num_workers = os.cpu_count() or 4
+
+        merge_lookup = self._merge_lookup()
+        special_pattern = "|".join(re.escape(t) for t in self.special_tokens) if self.special_tokens else ""
+        split_token = self.special_tokens[0].encode("utf-8") if self.special_tokens else b"\n"
+
+        with open(input_path, "rb") as f:
+            boundaries = find_chunk_boundaries(f, num_workers, split_token)
+
+        chunk_args = [
+            (input_path, special_pattern, merge_lookup, boundaries[i], boundaries[i + 1])
+            for i in range(len(boundaries) - 1)
+            if boundaries[i] < boundaries[i + 1]
+        ]
+
+        with mp.Pool(num_workers) as pool:
+            chunk_results = pool.starmap(_encode_file_chunk, chunk_args)
+
+        result = []
+        for tokens in chunk_results:
+            result.extend(tokens)
         return result
 
     def decode(self, token_ids: list[int]) -> str:

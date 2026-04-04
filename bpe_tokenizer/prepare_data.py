@@ -13,7 +13,6 @@ import sys
 from time import time
 
 import numpy as np
-from tqdm import tqdm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -37,17 +36,15 @@ def main():
     if vocab_size > 65535:
         raise ValueError(f"Vocab size {vocab_size} exceeds uint16 max (65535)")
 
-    print(f"Reading {args.input}...")
-    with open(args.input, "r", encoding="utf-8") as f:
-        text = f.read()
-    print(f"  {len(text):,} characters")
+    file_size = os.path.getsize(args.input)
+    print(f"Input: {args.input} ({file_size / 1e6:.1f} MB)")
 
     start = time()
-    print("Encoding...")
-    token_ids = tokenizer.encode(text)
+    print(f"Encoding with {os.cpu_count()} workers...")
+    token_ids = tokenizer.encode_file(args.input, num_workers=os.cpu_count())
     elapsed = time() - start
     print(f"  {len(token_ids):,} tokens in {elapsed:.1f}s")
-    print(f"  compression ratio: {len(text) / len(token_ids):.2f} chars/token")
+    print(f"  compression ratio: {file_size / len(token_ids):.1f} bytes/token")
 
     arr = np.array(token_ids, dtype=np.uint16)
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
