@@ -9,9 +9,7 @@ from bpe_tokenizer.utils import find_chunk_boundaries, MergeStats, TrainingTrack
 
 GPT_PATTERN = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 
-
 def _encode_chunk(text: str, merge_lookup: dict[tuple[int, int], int]) -> list[int]:
-    """Encode a text chunk using priority-based merge lookup."""
     result = []
     for m in re.finditer(GPT_PATTERN, text):
         ids = list(m.group().encode("utf-8"))
@@ -36,7 +34,6 @@ def _encode_file_chunk(
     input_path: str, special_pattern: str, merge_lookup: dict[tuple[int, int], int],
     start: int, end: int,
 ) -> list[int]:
-    """Read a byte range from a file, split by special tokens, and encode."""
     with open(input_path, "rb") as f:
         f.seek(start)
         chunk_bytes = f.read(end - start)

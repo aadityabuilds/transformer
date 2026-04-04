@@ -22,7 +22,6 @@ from transformer.utils import (
     load_checkpoint,
 )
 
-
 def parse_args():
     p = argparse.ArgumentParser(description="Train a Transformer language model")
 
