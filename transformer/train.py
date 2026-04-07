@@ -3,13 +3,10 @@ import math
 import os
 import sys
 import time
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 import numpy as np
 import torch
 from tqdm import tqdm
-
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from transformer import Transformer
 from transformer.utils import (
     cross_entropy_loss,
@@ -96,8 +93,7 @@ def main():
         num_layers=args.num_layers,
         d_model=args.d_model,
         num_heads=args.num_heads,
-        num_embeddings=args.vocab_size,
-        embedding_dim=args.d_model,
+        vocab_size=args.vocab_size,
         theta=args.theta,
         max_seq_len=args.context_length,
         use_rope=args.use_rope,

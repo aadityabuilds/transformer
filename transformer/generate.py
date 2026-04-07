@@ -1,15 +1,11 @@
 import argparse
 import sys
 import os
-
 import torch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from transformer import Transformer
 from transformer.utils import generate
 from bpe_tokenizer.tokenizer import Tokenizer
-
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 def get_device(requested: str | None) -> torch.device:
     if requested:
@@ -19,7 +15,6 @@ def get_device(requested: str | None) -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
-
 
 def main():
     parser = argparse.ArgumentParser(description="Generate text with a trained transformer")
@@ -53,8 +48,7 @@ def main():
         num_layers=args.num_layers,
         d_model=args.d_model,
         num_heads=args.num_heads,
-        num_embeddings=vocab_size,
-        embedding_dim=args.d_model,
+        vocab_size=vocab_size,
         theta=args.theta,
         max_seq_len=args.context_length,
         use_rope=args.use_rope,
@@ -77,7 +71,6 @@ def main():
         device=device,
     )
     print(output)
-
 
 if __name__ == "__main__":
     main()

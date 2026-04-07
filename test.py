@@ -1,2 +1,2 @@
 text = "hello"
-print((text.encode("utf-8")))
+print((list(text.encode("utf-8"))))

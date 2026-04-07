@@ -16,12 +16,12 @@ class Linear(nn.Module):
         return x @ self.weights.T 
 
 class Embedding(nn.Module):
-    def __init__(self, num_embeddings, embedding_dim, device=None, dtype=torch.float32):
+    def __init__(self, vocab_size, d_model, device=None, dtype=torch.float32):
         super().__init__()
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
-        self.weights = nn.Parameter(torch.empty(num_embeddings, embedding_dim, device=device, dtype=dtype))
-        std = math.sqrt(2 / (num_embeddings + embedding_dim))
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.weights = nn.Parameter(torch.empty(vocab_size, d_model, device=device, dtype=dtype))
+        std = math.sqrt(2 / (vocab_size + d_model))
         torch.nn.init.trunc_normal_(self.weights, mean=0.0, std=std, a=-3 * std, b=3 * std)
 
     def forward(self, token_ids):
@@ -157,7 +157,7 @@ class TransformerBlock(nn.Module):
         return x + FFN 
 
 class Transformer(nn.Module):
-    def __init__(self, num_layers, d_model, num_heads,  num_embeddings, embedding_dim, theta=None, max_seq_len=None, use_rope=False):
+    def __init__(self, num_layers, d_model, num_heads, vocab_size, theta=None, max_seq_len=None, use_rope=False):
         super().__init__()
         self.num_layers = num_layers
         self.d_model = d_model 
@@ -165,12 +165,11 @@ class Transformer(nn.Module):
         self.theta = theta
         self.max_seq_len = max_seq_len
         self.use_rope = use_rope
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
-        self.embedding = Embedding(num_embeddings, embedding_dim)
+        self.vocab_size = vocab_size
+        self.embedding = Embedding(vocab_size, d_model)
         self.blocks = nn.ModuleList([TransformerBlock(d_model, num_heads, theta, max_seq_len, use_rope) for _ in range(num_layers)])
         self.norm = RMSNorm(d_model)
-        self.linear = Linear(in_features=d_model, out_features=num_embeddings)
+        self.linear = Linear(in_features=d_model, out_features=vocab_size)
 
     def forward(self, token_list):
         embeddings = self.embedding(token_list)
