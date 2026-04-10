@@ -26,3 +26,8 @@ Thumbs.db
 
 # Tokenizer checkpoints
 bpe_tokenizer/checkpoints/
+
+# Training checkpoints and ONNX exports (regenerated locally)
+checkpoints/
+onnx_export/
+onnx_export_tinystories/
