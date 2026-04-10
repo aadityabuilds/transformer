@@ -75,7 +75,6 @@ def get_device(requested: str | None) -> torch.device:
         return torch.device("mps")
     return torch.device("cpu")
 
-
 def main():
     args = parse_args()
 
